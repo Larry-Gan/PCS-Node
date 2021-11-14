@@ -1,0 +1,13 @@
+[run]
+omit = */tests/*
+       */routes/*
+       */utils/*
+       */docs/*
+       */scripts/*
+       geoinfoprovider/__init__.py
+       geoinfoprovider/main/config.py
+       geoinfoprovider/main/app.py
+       geoinfoprovider/main/__init__.py
+
+[report]
+fail_under = 85.0

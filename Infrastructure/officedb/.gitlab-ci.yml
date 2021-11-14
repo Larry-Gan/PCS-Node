@@ -1,0 +1,26 @@
+image: "python:3.8.1-slim-buster"
+
+stages:
+    - install
+    - reset
+
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - venv/
+
+before_script:
+  - mkdir -p ./creds
+  - echo $FIREBASE_SA | base64 -d > ./creds/firebase-sa.json
+
+install:
+    stage: install
+    script:
+        - ./run configure
+
+reset:
+    stage: reset
+    script:
+        - ./run reset
+    when: manual
+    allow_failure: false

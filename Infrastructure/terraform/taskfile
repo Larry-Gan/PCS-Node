@@ -1,0 +1,48 @@
+#!/bin/bash
+
+
+plan_file_name=plan.tfplan
+json_plan_file_name=tfplan.json
+
+validate () {
+    env=$1
+
+    cd ./environments/$env
+
+    terraform workspace select $env || terraform workspace new $env
+    terraform validate
+}
+
+plan () {
+    env=$1
+
+    cd ./environments/$env
+
+    terraform workspace select $env || terraform workspace new $env
+    terraform plan -out=$plan_file_name
+}
+
+apply () {
+    env=$1
+
+    cd ./environments/$env
+
+    terraform workspace select $env || terraform workspace new $env
+    terraform apply -input=false $plan_file_name
+}
+
+configure () {
+    env=$1
+
+    cp -R ./creds ./environments/$env
+    cp backend.tf ./environments/$env
+    cp terraform.tfvars ./environments/$env
+    cp variables.tf ./environments/$env
+    cp versions.tf ./environments/$env
+
+    cd ./environments/$env
+
+    terraform init
+}
+
+$1 ${@:2}

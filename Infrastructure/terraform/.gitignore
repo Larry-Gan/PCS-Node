@@ -1,0 +1,12 @@
+creds/
+.terraform/
+terraform.tfstate.d/
+tfdev_plan
+plan.tfplan
+tfplan.json
+.terraform.lock.hcl
+environments/**/terraform.tfvars
+environments/**/backend.tf
+environments/**/variables.tf
+environments/**/versions.tf
+.terraform.lock.hcl

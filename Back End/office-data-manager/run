@@ -1,0 +1,41 @@
+#!/bin/bash
+
+
+app_location="officedatamanager.main.app:create_app"
+
+dev () {
+    export FLASK_APP="$app_location('dev')"
+    export FLASK_ENV="development"
+    flask run -p 8080
+}
+
+prod () {
+    gunicorn "$app_location('prod')" -b 0.0.0.0:$PORT $@
+}
+
+test () {
+    pytest --cov-config=.coveragerc --cov=officedatamanager $@
+}
+
+lint () {
+    flake8 --max-line-length=120 ./officedatamanager $@
+}
+
+configure () {
+    python3 -m venv venv
+    source venv/bin/activate
+    pip3 install -r requirements.txt
+
+    if [ "$1" = "dev" ]
+    then
+        pip3 install -r requirements-dev.txt
+    fi
+}
+
+if [ "$2" = "--no-venv" ]
+then
+    $1 ${@:3}
+else
+    source venv/bin/activate
+    $1 ${@:2}
+fi

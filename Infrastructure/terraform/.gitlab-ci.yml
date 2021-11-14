@@ -1,0 +1,124 @@
+image:
+  name: registry.gitlab.com/gitlab-org/gitlab-build-images:terraform
+  entrypoint:
+    - '/usr/bin/env'
+    - 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+
+variables:
+  PLAN: plan.tfplan
+  JSON_PLAN_FILE: tfplan.json
+
+cache:
+  paths:
+    - .terraform
+    - environments/shared/.terraform
+    - environments/dev/.terraform
+    - environments/prod/.terraform
+
+before_script:
+  - apk update && apk add bash
+  - alias convert_report="jq -r '([.resource_changes[]?.change.actions?]|flatten)|{\"create\":(map(select(.==\"create\"))|length),\"update\":(map(select(.==\"update\"))|length),\"delete\":(map(select(.==\"delete\"))|length)}'"
+  - rm -rf .terraform
+  - rm -rf environments/shared/.terraform
+  - rm -rf environments/dev/.terraform
+  - rm -rf environments/prod/.terraform
+  - terraform --version
+  - mkdir -p ./creds
+  - echo $TERRAFORM_SA | base64 -d > ./creds/terraform-sa.json
+  - echo $BACKEND_SA | base64 -d > ./creds/backend-sa.json
+
+stages:
+  - validate
+  - plan
+  - apply_shared
+  - apply_dev
+  - apply_prod
+
+validate_shared:
+  stage: validate
+  script:
+    - ./taskfile configure shared
+    - ./taskfile validate shared
+
+validate_dev:
+  stage: validate
+  script:
+    - ./taskfile configure dev
+    - ./taskfile validate dev
+
+validate_prod:
+  stage: validate
+  script:
+    - ./taskfile configure prod
+    - ./taskfile validate prod
+
+plan_shared:
+  stage: plan
+  script:
+    - ./taskfile configure shared
+    - ./taskfile plan shared
+    - cd ./environments/shared
+    - "terraform show --json $PLAN | convert_report > $JSON_PLAN_FILE"
+  artifacts:
+    paths:
+      - environments/shared/$PLAN
+    reports:
+      terraform: environments/shared/$JSON_PLAN_FILE
+
+plan_dev:
+  stage: plan
+  script:
+    - ./taskfile configure dev
+    - ./taskfile plan dev
+    - cd ./environments/dev
+    - "terraform show --json $PLAN | convert_report > $JSON_PLAN_FILE"
+  artifacts:
+    paths:
+      - environments/dev/$PLAN
+    reports:
+      terraform: environments/dev/$JSON_PLAN_FILE
+
+plan_prod:
+  stage: plan
+  script:
+    - ./taskfile configure prod
+    - ./taskfile plan prod
+    - cd ./environments/prod
+    - "terraform show --json $PLAN | convert_report > $JSON_PLAN_FILE"
+  artifacts:
+    paths:
+      - environments/prod/$PLAN
+    reports:
+      terraform: environments/prod/$JSON_PLAN_FILE
+
+apply_shared:
+  stage: apply_shared
+  script:
+    - ./taskfile configure shared
+    - ./taskfile apply shared
+  dependencies:
+    - plan_shared
+  when: manual
+  allow_failure: false
+
+apply_dev:
+  stage: apply_dev
+  script:
+    - ./taskfile configure dev
+    - ./taskfile apply dev
+  dependencies:
+    - plan_dev
+  when: manual
+  allow_failure: false
+
+apply_prod:
+  stage: apply_prod
+  script:
+    - ./taskfile configure prod
+    - ./taskfile apply prod
+  dependencies:
+    - plan_prod
+  when: manual
+  only:
+    - master
+  allow_failure: false

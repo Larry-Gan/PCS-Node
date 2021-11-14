@@ -1,0 +1,124 @@
+image: "node:current-alpine"
+
+stages:
+  - build
+  - test
+  - docker_build
+  - deploy_dev
+  - deploy_prod
+
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - node_modules/
+    - dist/
+    - src/generated
+    - .npm/
+
+before_script:
+  - mkdir -p ./src/creds
+  - echo $FIREBASE_SA | base64 -d > ./src/creds/firebase-sa.json
+
+build:
+  stage: build
+  script:
+    - echo "Installing dependencies"
+    - npm ci --cache .npm --prefer-offline
+    - echo "Building graphql API"
+    - npm run build
+
+lint:
+  stage: test
+  script:
+    - npm run lint
+
+test:
+  stage: test
+  script:
+    - npm run test:verbose
+
+type-check:
+  stage: test
+  script:
+    - npm run type-check
+
+docker_build:
+  image: docker:19.03.12
+  services:
+    - docker:19.03.12-dind
+  stage: docker_build
+  variables:
+    DOCKER_DRIVER: overlay2
+    DOCKER_BUILDKIT: 1
+  script:
+      # Login to Google Container Registry
+      - echo $GCR_SA | base64 -d | docker login -u _json_key --password-stdin https://gcr.io
+      # Login to $GKE_USERNAME_DEV Container Registry
+      - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+      - docker build
+          --target builder
+          --cache-from gcr.io/$GCP_PROJECT_ID/$CI_PROJECT_PATH:$CI_COMMIT_BRANCH-latest-builder 
+          --build-arg BUILDKIT_INLINE_CACHE=1 
+          --tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA-builder 
+          --tag $CI_REGISTRY_IMAGE:$CI_COMMIT_BRANCH-latest-builder 
+          --tag gcr.io/$GCP_PROJECT_ID/$CI_PROJECT_PATH:$CI_COMMIT_SHA-builder 
+          --tag gcr.io/$GCP_PROJECT_ID/$CI_PROJECT_PATH:$CI_COMMIT_BRANCH-latest-builder 
+          "."
+      - docker build
+          --cache-from gcr.io/$GCP_PROJECT_ID/$CI_PROJECT_PATH:$CI_COMMIT_BRANCH-latest-builder
+          --cache-from gcr.io/$GCP_PROJECT_ID/$CI_PROJECT_PATH:$CI_COMMIT_BRANCH-latest 
+          --build-arg BUILDKIT_INLINE_CACHE=1 
+          --tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA 
+          --tag $CI_REGISTRY_IMAGE:$CI_COMMIT_BRANCH-latest 
+          --tag gcr.io/$GCP_PROJECT_ID/$CI_PROJECT_PATH:$CI_COMMIT_SHA 
+          --tag gcr.io/$GCP_PROJECT_ID/$CI_PROJECT_PATH:$CI_COMMIT_BRANCH-latest 
+          "."
+  after_script:
+      - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA-builder
+      - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_BRANCH-latest-builder
+      - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+      - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_BRANCH-latest
+      - docker push gcr.io/$GCP_PROJECT_ID/$CI_PROJECT_PATH:$CI_COMMIT_SHA-builder
+      - docker push gcr.io/$GCP_PROJECT_ID/$CI_PROJECT_PATH:$CI_COMMIT_BRANCH-latest-builder
+      - docker push gcr.io/$GCP_PROJECT_ID/$CI_PROJECT_PATH:$CI_COMMIT_SHA
+      - docker push gcr.io/$GCP_PROJECT_ID/$CI_PROJECT_PATH:$CI_COMMIT_BRANCH-latest
+
+deploy_dev:
+    image: google/cloud-sdk
+    stage: deploy_dev
+    services:
+        - docker:dind
+    script:
+        # Make gcloud available
+        - source /root/.bashrc
+        - kubectl config set-cluster $GKE_CLUSTER_DEV --server="$GKE_SERVER_DEV"
+        - kubectl config set clusters.$GKE_CLUSTER_DEV.certificate-authority-data $GKE_CERTIFICATE_AUTHORITY_DATA_DEV
+        - kubectl config set-credentials $GKE_USERNAME_DEV --username=$GKE_USERNAME_DEV --password=$GKE_PASSWORD_DEV
+        - kubectl config set-context default --cluster=$GKE_CLUSTER_DEV --user=$GKE_USERNAME_DEV
+        - kubectl config use-context default
+        - kubectl set image deployment/$CI_PROJECT_NAME $CI_PROJECT_NAME=gcr.io/$GCP_PROJECT_ID/$CI_PROJECT_PATH:$CI_COMMIT_SHA
+        - kubectl rollout status deployment/$CI_PROJECT_NAME --timeout=180s
+        - EXTERNAL_IP_DEV=$(kubectl get service $CI_PROJECT_NAME -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+        - echo "View changes at http://$EXTERNAL_IP_DEV:5000/graphql"
+    when: manual
+    allow_failure: false
+
+deploy_prod:
+    image: google/cloud-sdk
+    stage: deploy_prod
+    services:
+        - docker:dind
+    script:
+        # Make gcloud available
+        - source /root/.bashrc
+        - kubectl config set-cluster $GKE_CLUSTER_PROD --server="$GKE_SERVER_PROD"
+        - kubectl config set clusters.$GKE_CLUSTER_PROD.certificate-authority-data $GKE_CERTIFICATE_AUTHORITY_DATA_PROD
+        - kubectl config set-credentials $GKE_USERNAME_PROD --username=$GKE_USERNAME_PROD --password=$GKE_PASSWORD_PROD
+        - kubectl config set-context default --cluster=$GKE_CLUSTER_PROD --user=$GKE_USERNAME_PROD
+        - kubectl config use-context default
+        - kubectl set image deployment/$CI_PROJECT_NAME $CI_PROJECT_NAME=gcr.io/$GCP_PROJECT_ID/$CI_PROJECT_PATH:$CI_COMMIT_SHA
+        - kubectl rollout status deployment/$CI_PROJECT_NAME --timeout=180s
+    when: manual
+    only:
+        - master
+    allow_failure: false
